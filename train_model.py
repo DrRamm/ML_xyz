@@ -1,4 +1,8 @@
 # coding: "GBK
+
+from keras.optimizers import Adam
+from numpy import concatenate
+
 from common import *
 from keras.callbacks import EarlyStopping
 
@@ -8,75 +12,85 @@ from keras.callbacks import TensorBoard
 
 np.random.seed(42)
 
+UNIT = 20
+EPOCHS = 8
+BATCH = 2
+PAT = 10
+VAL_SPLIT = 0.2
+FILTERS = 32
+KERN_SIZE = 3
+
 
 def create_model():
     input_shape = (chunk_size, rows)
 
-    # model.add(Conv1D(32, 3, activation='relu'))
-    # model.add(MaxPooling1D(pool_size=4))
-    model.add(LSTM(units=30, input_shape=input_shape, return_sequences=True))
-    # model.add(LSTM(units=50, input_shape=input_shape))
-    model.add(LSTM(units=30))
+    model.add(Conv1D(FILTERS, KERN_SIZE, activation='relu'))
+    model.add(MaxPooling1D(pool_size=4))
+    # model.add(LSTM(units=30, input_shape=input_shape, return_sequences=True))
+    model.add(LSTM(units=UNIT, input_shape=input_shape))
+    # model.add(LSTM(units=30))
     model.add(Dropout(0.15))
     model.add(Dense(rows,  activation='softmax'))
-    model.compile(loss='categorical_crossentropy', optimizer='adam',  metrics=['accuracy'])
+    model.compile(loss='categorical_crossentropy', optimizer=Adam(clipnorm=1.),  metrics=['accuracy'])
 
 
-early_stop = EarlyStopping(monitor='val_loss', min_delta=0, patience=5, verbose=0, mode='auto')
-tensor_board = TensorBoard(log_dir='./Graph_training', histogram_freq=2000,
+graph_name = ("epo=%d batch=%d pat=%d unit=%d vsplit=%.2f filt=%d ksize=%d" % (EPOCHS, BATCH,PAT, UNIT, VAL_SPLIT, FILTERS, KERN_SIZE))
+
+early_stop = EarlyStopping(monitor='val_loss', min_delta=0, patience=PAT, verbose=0, mode='auto')
+tensor_board = TensorBoard(log_dir='./Graph_training/' + graph_name, histogram_freq=2000,
                            write_graph=True, write_images=True, write_grads=True)
 
 callback = [tensor_board, early_stop]
 
 
 def fit_model(x, y):
-    model.fit(x, y, epochs=5, validation_split=0.3, verbose=0, shuffle=True, callbacks=callback)
+    for i in range(1):
+        model.fit(x, y, epochs=EPOCHS, batch_size=BATCH, validation_split=VAL_SPLIT, verbose=1, shuffle=True, callbacks=callback)
 
 
 #######################
 
 
-def train_model(file, number):
-    print("---------------- Train %d ----------------" % number)
-    data_scaled = scale_data(get_data_from_file(file))
-    data_reshaped, chunks = reshape_data(data_scaled)
-    y = np.full((chunks, 3), number, "int32")
-    print("Y shaped to ", y.shape)
+def prepare_all_data():
+    print("\n---------------- Prepare ----------------")
+    x1, y1 = get_x_y(bad_folder, get_ind_by_name("bad"))
+    x2, y2 = get_x_y(good_folder, get_ind_by_name("good"))
+    x3, y3 = get_x_y(avr_folder, get_ind_by_name("avr"))
 
-    for i in range(2):
-        print("---------------- %d ----------------" % i)
-        fit_model(data_reshaped, y)
+    full_x = concatenate((x1, x2, x3))
+    full_y = concatenate((y1, y2, y3))
+
+    final_x, final_y = shuffle_x_y(full_x, full_y)
+
+    print(final_x)
+    print(final_y)
+
+    print("\nPrepared shapes:")
+    print("X is ", final_x.shape)
+    print("Y is ", final_y.shape)
+    return final_x, final_y
+
+
+def train_model():
+    x, y = prepare_all_data()
+    fit_model(x, y)
+    check_acc(x, y)
 
 
 def check_acc(x_test, y_test):
+    print("\n---------------- Checking evaluate ----------------")
     loss, acc = model.evaluate(x_test, y_test)
     print("Model loss ", loss)
     print("Model acc %f %%" % (acc*100))
 
 
-def check_model(file, number):
-    print("---------------- Check %d for file %s ----------------" % (number, file))
-    data_scaled = scale_data(get_data_from_file(file))
-    data_reshaped, chunks = reshape_data(data_scaled)
-    y = np.full((chunks, 3), number, "int32")
-    print("Y shaped to ", y.shape)
-
-    check_acc(data_reshaped, y)
-
-
 create_model()
+train_model()
 
-train_model(file_good, GOOD_NUMBER)
-train_model(file_bad, BAD_NUMBER)
-train_model(file_avr, AVR_NUMBER)
-
-check_model(file_good_cut, GOOD_NUMBER)
-check_model(file_bad_cut,  BAD_NUMBER)
-check_model(file_avr_cut,  AVR_NUMBER)
-
-print("Saving model")
+print("\nSaving model")
 model.save(modelPath)
 model.save_weights(modelWeightsPath)
 
-print("---------------- Done ----------------")
+print("\n---------------- Done ----------------")
+print("Look at %s graph" % graph_name)
 print("tensorboard --logdir ./Graph_training --host=127.0.0.1")
